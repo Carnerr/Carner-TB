@@ -23,36 +23,15 @@ class TrainerGUI(tk.Tk):
 
         ttk.Button(button_frame, text="Pull Alpha Vantage Data", command=self.run_data_pull).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Update Data", command=self.run_data_update).pack(side="left", padx=4)
-        ttk.Button(button_frame, text="Pull News", command=self.run_news_pull).pack(side="left", padx=4)
-        ttk.Button(button_frame, text="Run Scanner", command=self.run_scanner).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Run Baseline", command=self.run_baseline).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Train Model", command=self.run_training).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Organize Data", command=self.run_data_organize).pack(side="left", padx=4)
-        ttk.Button(button_frame, text="Generate Performance Report", command=self.run_performance).pack(side="left", padx=4)
         ttk.Button(button_frame, text="Refresh Metrics", command=self.refresh_metrics).pack(side="left", padx=4)
 
         self.metrics_table = ttk.Treeview(self, columns=("episode", "epsilon", "avg_reward", "avg_loss", "algo"), show="headings")
         for col in ("episode", "epsilon", "avg_reward", "avg_loss", "algo"):
             self.metrics_table.heading(col, text=col)
         self.metrics_table.pack(fill="both", expand=True, padx=8, pady=8)
-
-        self.scanner_table = ttk.Treeview(
-            self,
-            columns=("day", "symbol", "pct_up", "daily_rvol", "price", "had_news"),
-            show="headings",
-        )
-        for col in ("day", "symbol", "pct_up", "daily_rvol", "price", "had_news"):
-            self.scanner_table.heading(col, text=col)
-        self.scanner_table.pack(fill="both", expand=True, padx=8, pady=8)
-
-        self.trades_table = ttk.Treeview(
-            self,
-            columns=("day", "symbol", "entry_time", "exit_time", "pnl", "return_pct"),
-            show="headings",
-        )
-        for col in ("day", "symbol", "entry_time", "exit_time", "pnl", "return_pct"):
-            self.trades_table.heading(col, text=col)
-        self.trades_table.pack(fill="both", expand=True, padx=8, pady=8)
 
     def _append_output(self, text: str) -> None:
         self.output.insert("end", text + "\n")
@@ -75,15 +54,6 @@ class TrainerGUI(tk.Tk):
 
     def run_baseline(self) -> None:
         threading.Thread(target=self._run_command, args=(["python", "-m", "src.analysis.baseline"],), daemon=True).start()
-
-    def run_news_pull(self) -> None:
-        threading.Thread(target=self._run_command, args=(["python", "-m", "src.data.news_alpha_vantage"],), daemon=True).start()
-
-    def run_scanner(self) -> None:
-        threading.Thread(target=self._run_command, args=(["python", "-m", "src.analysis.scanner"],), daemon=True).start()
-
-    def run_performance(self) -> None:
-        threading.Thread(target=self._run_command, args=(["python", "-m", "src.analysis.performance"],), daemon=True).start()
 
     def run_data_update(self) -> None:
         threading.Thread(
@@ -115,44 +85,6 @@ class TrainerGUI(tk.Tk):
                     row["algo"],
                 ),
             )
-
-        scanner_path = Path("logs/scanner_candidates.csv")
-        if scanner_path.exists():
-            scanner_df = pd.read_csv(scanner_path)
-            for row in self.scanner_table.get_children():
-                self.scanner_table.delete(row)
-            for _, row in scanner_df.tail(10).iterrows():
-                self.scanner_table.insert(
-                    "",
-                    "end",
-                    values=(
-                        row["day"],
-                        row["symbol"],
-                        f"{float(row['pct_up']):.2f}",
-                        f"{float(row['daily_rvol']):.2f}",
-                        f"{float(row['price']):.2f}",
-                        row["had_news"],
-                    ),
-                )
-
-        trades_path = Path("logs/trades.csv")
-        if trades_path.exists():
-            trades_df = pd.read_csv(trades_path)
-            for row in self.trades_table.get_children():
-                self.trades_table.delete(row)
-            for _, row in trades_df.tail(20).iterrows():
-                self.trades_table.insert(
-                    "",
-                    "end",
-                    values=(
-                        row.get("trade_day", row.get("day", "")),
-                        row.get("symbol", ""),
-                        row.get("entry_time", ""),
-                        row.get("exit_time", ""),
-                        f"{float(row.get('pnl', 0.0)):.2f}",
-                        f"{float(row.get('return_pct', 0.0)):.4f}",
-                    ),
-                )
 
 
 if __name__ == "__main__":

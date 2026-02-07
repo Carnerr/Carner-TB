@@ -16,7 +16,6 @@ class MarketState:
     low: float
     close: float
     open: float
-    timestamp: pd.Timestamp | None = None
 
 
 class MarketSimulator:
@@ -53,7 +52,6 @@ class MarketSimulator:
             low=float(row.get("low", price)),
             close=price,
             open=float(row.get("open", price)),
-            timestamp=row.get("timestamp", row.get("ts")),
         )
 
 
@@ -67,14 +65,6 @@ def compute_features(window: pd.DataFrame) -> np.ndarray:
             float(row.get("rel_vol_1m", 0.0)),
             float(row.get("vwap_dist", 0.0)),
             float(row.get("range_1m", 0.0)),
-            float(row.get("macd_line", 0.0)),
-            float(row.get("macd_signal", 0.0)),
-            float(row.get("macd_hist", 0.0)),
-            float(row.get("macd_positive", 0.0)),
-            float(row.get("bull_flag_like", 0.0)),
-            float(row.get("first_pullback_like", 0.0)),
-            float(row.get("parabolic_proxy", 0.0)),
-            float(row.get("abcd_proxy", 0.0)),
         ],
         dtype=float,
     )

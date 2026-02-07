@@ -33,22 +33,3 @@ class TrainingConfig:
     replay_capacity: int = 50_000
     target_sync_steps: int = 250
     device: str = "auto"
-
-
-@dataclass
-class RossLikeConfig:
-    timezone: str = "America/New_York"
-    trade_start: str = "07:00"
-    trade_end: str = "10:00"
-    price_min: float = 2.0
-    price_max: float = 20.0
-    min_pct_up: float = 0.10
-    min_rvol_daily: float = 5.0
-    top_n: int = 3
-    require_news: bool = True
-    news_lookback_hours: int = 24
-    float_max: int = 20_000_000
-    max_trades_per_day: int = 1
-    daily_profit_target_pct: float = 0.10
-    daily_max_loss_pct: float = 0.10
-    slippage_bps: int = 0

@@ -9,13 +9,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from datetime import datetime, time as dt_time
-from zoneinfo import ZoneInfo
-
-from src.config import AlphaVantageConfig, RossLikeConfig, TrainingConfig
+from src.config import AlphaVantageConfig, TrainingConfig
 from src.data.ingest import load_symbol_bundle
-from src.data.news_alpha_vantage import load_cached_news
-from src.analysis.scanner import scan_day
 from src.market.features import build_feature_frame
 from src.market.simulator import MarketSimulator
 from src.rl.agent import QAgent, QAgentConfig
@@ -24,26 +19,16 @@ from src.rl.env import TradingEnv
 from src.rl.vector_env import run_parallel_episodes
 
 
-def _slice_trade_window(df: pd.DataFrame, ross_config: RossLikeConfig) -> pd.DataFrame:
-    tz = ZoneInfo(ross_config.timezone)
-    start_time = _parse_time(ross_config.trade_start)
-    end_time = _parse_time(ross_config.trade_end)
-    timestamps = df.index
-    localized = []
-    for ts in timestamps:
-        if ts.tzinfo is None:
-            localized.append(ts.replace(tzinfo=tz))
-        else:
-            localized.append(ts.astimezone(tz))
-    df = df.copy()
-    df["__local_time"] = [t.time() for t in localized]
-    window = df[(df["__local_time"] >= start_time) & (df["__local_time"] <= end_time)].drop(columns="__local_time")
-    return window
-
-
-def _parse_time(value: str) -> dt_time:
-    hour, minute = value.split(":")
-    return dt_time(hour=int(hour), minute=int(minute))
+def _sample_windows(df: pd.DataFrame, lookback: int, episode_length: int, num_envs: int) -> list[pd.DataFrame]:
+    windows: list[pd.DataFrame] = []
+    max_start = len(df) - episode_length - 1
+    if max_start <= lookback:
+        raise ValueError("Not enough data to sample training windows.")
+    for _ in range(num_envs):
+        start = random.randint(lookback, max_start)
+        window = df.iloc[start - lookback : start + episode_length].copy()
+        windows.append(window)
+    return windows
 
 
 def _rollout_single(env: TradingEnv, agent: QAgent) -> float:
@@ -92,26 +77,9 @@ def _init_metrics_log(path: Path) -> None:
 
 def train(config: TrainingConfig, data_config: AlphaVantageConfig) -> None:
     data_dir = Path(data_config.output_dir)
-    ross_config = RossLikeConfig()
-    news_df = load_cached_news("data/raw/news")
-
-    symbol_bundle: dict[str, dict[str, pd.DataFrame]] = {}
-    daily_bundle: dict[str, pd.DataFrame] = {}
-    all_days: set[pd.Timestamp] = set()
-    for symbol in data_config.symbols:
-        bundle = load_symbol_bundle(str(data_dir), symbol)
-        symbol_bundle[symbol] = bundle
-        daily_bundle[symbol] = bundle["daily"]
-        all_days.update(bundle["1min"].index.normalize().unique())
-
-    if not all_days:
-        raise ValueError("No data available to train.")
-
-    sample_symbol = data_config.symbols[0]
-    sample_bundle = symbol_bundle[sample_symbol]
-    sample_features = build_feature_frame(
-        sample_bundle["1min"], sample_bundle["5min"], sample_bundle["daily"], config.lookback
-    )
+    symbol = data_config.symbols[0]
+    bundle = load_symbol_bundle(str(data_dir), symbol)
+    df = build_feature_frame(bundle["1min"], bundle["5min"], bundle["daily"], config.lookback)
 
     agent_config = QAgentConfig(
         learning_rate=config.learning_rate,
@@ -132,43 +100,21 @@ def train(config: TrainingConfig, data_config: AlphaVantageConfig) -> None:
         device=config.device,
     )
     agent = QAgent(agent_config)
-    dqn_agent = DQNAgent(dqn_config, input_dim=sample_features.shape[1] + 1)
+    dqn_agent = DQNAgent(dqn_config, input_dim=df.shape[1] + 1)
 
     metrics_path = Path("logs/training_metrics.csv")
     _init_metrics_log(metrics_path)
 
     for episode in range(config.episodes):
-        attempt = 0
-        selected_window = None
-        selected_symbol = None
-        while attempt < 10 and selected_window is None:
-            day = random.choice(list(all_days)).to_pydatetime()
-            symbol_minute = {symbol: data["1min"] for symbol, data in symbol_bundle.items()}
-            scan_result = scan_day(symbol_minute, daily_bundle, news_df, ross_config, day)
-            if not scan_result.candidates:
-                attempt += 1
-                continue
-            selected_symbol = scan_result.candidates[0].symbol
-            bundle = symbol_bundle[selected_symbol]
-            df = build_feature_frame(bundle["1min"], bundle["5min"], bundle["daily"], config.lookback)
-            df_day = df[df.index.date == day.date()]
-            window = _slice_trade_window(df_day, ross_config)
-            if window.empty:
-                attempt += 1
-                continue
-            selected_window = window
-
-        if selected_window is None:
-            continue
-
+        windows = _sample_windows(df, config.lookback, config.episode_length, config.num_envs)
         if config.use_dqn:
-            simulator = MarketSimulator(selected_window, config.lookback)
-            env = TradingEnv(simulator, config.max_position, config.cash_start, config.max_hold_steps, ross_config)
+            simulator = MarketSimulator(windows[0], config.lookback)
+            env = TradingEnv(simulator, config.max_position, config.cash_start, config.max_hold_steps)
             avg_reward, avg_loss = _rollout_dqn(env, dqn_agent)
         elif config.num_envs > 1:
             agent_state = {"config": asdict(agent_config), "q_table": agent.q_table, "epsilon": agent.epsilon}
             results = run_parallel_episodes(
-                [selected_window for _ in range(config.num_envs)],
+                windows,
                 config.lookback,
                 config.max_position,
                 config.cash_start,
@@ -182,8 +128,8 @@ def train(config: TrainingConfig, data_config: AlphaVantageConfig) -> None:
             avg_reward = float(np.mean([r.total_reward for r in results]))
             avg_loss = 0.0
         else:
-            simulator = MarketSimulator(selected_window, config.lookback)
-            env = TradingEnv(simulator, config.max_position, config.cash_start, config.max_hold_steps, ross_config)
+            simulator = MarketSimulator(windows[0], config.lookback)
+            env = TradingEnv(simulator, config.max_position, config.cash_start, config.max_hold_steps)
             avg_reward = _rollout_single(env, agent)
             avg_loss = 0.0
 
